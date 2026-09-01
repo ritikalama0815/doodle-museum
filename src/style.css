@@ -1,0 +1,312 @@
+:root{
+  --wall:#f8f6f2;
+  --text:#111;
+  --muted:rgba(0,0,0,.55);
+  --line:rgba(0,0,0,.10);
+}
+
+*{ box-sizing:border-box;
+
+  font-family: "VT323", monospace; }
+
+html,body{ height:100%; }
+
+body{
+  margin:0;
+  background:var(--wall);
+  color:var(--text);
+}
+
+/* ===== Top bar ===== */
+.topbar {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:16px 24px;
+  border-bottom:1px solid var(--line);
+  background:#cb1818;
+  color: white;
+}
+
+.topbar {
+  margin:0;
+  font-size:18px;
+  letter-spacing:.2px;
+}
+
+h1 { font-size: 40px; }
+
+a { 
+  font-size: 24px; 
+  color: white;
+  text-decoration: none;
+}
+
+/* ===== Layout ===== */
+.layout{
+  max-width:1200px;
+  margin:30px auto;
+  padding:0 20px 40px;
+  display:grid;
+  grid-template-columns:1fr 1.2fr;
+  gap:40px;
+}
+
+@media (max-width:900px){
+  .layout{ grid-template-columns:1fr; }
+}
+
+/* .page{
+  max-width:1200px;
+  margin:30px auto;
+  padding:0 20px 40px;
+} */
+
+.sectionTitle{
+  margin:0 0 12px 0;
+  font-size:30px;
+  font-weight:800;
+}
+
+.status{
+  margin-top:10px;
+  font-size:12px;
+  color:var(--muted);
+}
+
+/* ===== Drawing area ===== */
+.drawSection{ align-self:start; }
+
+#canvas{
+  width:100%;
+  height:auto;
+  display:block;
+  background:#fff;
+  border:1px solid var(--line);
+  touch-action:none;
+  margin-top: 20px;
+}
+
+.controls{ margin-top:14px; }
+
+.controlRow {
+  padding-top: 15px;
+  padding-bottom: 15px;
+}
+
+.titleInput{
+  width:100%;
+  padding:10px 12px;
+  margin-top:10px;
+  /* border:1px solid var(--line); */
+  border-radius:10px;
+  background:#fff;
+  font-size:14px;
+}
+
+#caption {
+  border: none;
+  padding: 10px;
+}
+
+.buttons{
+  display:flex;
+  gap:10px;
+  margin-top:10px;
+}
+
+button{
+  padding:10px 16px;
+  border:0;
+  border-radius:12px;
+  background:#111;
+  color:#fff;
+  font-weight:800;
+  cursor:pointer;
+  font-family: "Playfair Display", serif;
+}
+
+button:hover{ opacity:.92; }
+
+/* ===== Palette ===== */
+.palette{
+  display:flex;
+  gap:10px;
+  flex-wrap:wrap;
+}
+
+.swatch{
+  width:26px;
+  height:26px;
+  border-radius:999px;
+  cursor:pointer;
+  border:2px solid rgba(0,0,0,.18);
+}
+
+.swatch.active{
+  outline:3px solid rgba(0,0,0,.7);
+  outline-offset:2px;
+}
+
+/* ===== Gallery grid ===== */
+.galleryGrid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:64px 72px;
+  align-items:start;
+}
+
+/* each art item is NOT a modern card */
+.artCard{
+  background:transparent !important;
+  border:0 !important;
+  box-shadow:none !important;
+  border-radius:0 !important;
+  padding:0 !important;
+  display:grid;
+  gap:14px;
+}
+
+/* ===== Frame stage ===== */
+.frameStage{
+  position:relative;
+  width:100%;
+  aspect-ratio:var(--stage-ratio, 3 / 2);
+}
+
+/* the window/opening that CLIPS art */
+.artWindow{
+  position: absolute;
+  left: var(--win-left, 10%);
+  right: var(--win-right, 10%);
+  top: var(--win-top, 15%);
+  bottom: var(--win-bottom, 15%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.artWindow img{
+  max-width: 90%;
+  max-height: 90%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Square that sizes based on frame orientation */
+.artSquare{
+  display:grid;
+  place-items:center;
+}
+
+/* vertical frames: limit by width */
+.frameStage[data-orient="v"] .artSquare{
+  width:100%;
+  height:auto;
+  aspect-ratio:1/1;
+}
+
+/* horizontal frames: limit by height */
+.frameStage[data-orient="h"] .artSquare{
+  height:100%;
+  width:auto;
+  aspect-ratio:1/1;
+}
+
+/* drawing image */
+.artSquare img{
+  width:100%;
+  height:100%;
+  object-fit:contain;
+  display:block;
+  transform:scale(.92);
+  transform-origin:center;
+}
+
+/* frame always on top */
+.frameImg{
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  z-index: -2;
+}
+
+.backboard{
+  position: absolute;
+  background: #fff;
+  z-index: 0;
+}
+
+/* ===== Placard ===== */
+.placard{ 
+  /* padding-left:2px;  */
+  background-color: white;
+  padding: 10px;
+}
+
+.placardTitle{
+  font-family:Georgia,serif;
+  font-size:18px;
+  font-weight:600;
+  line-height:1.15;
+  margin:0;
+}
+
+.placardMeta{
+  margin-top:6px;
+  font-size:13px;
+  color:var(--muted);
+}
+
+.galleryGrid > *{ min-width:0; }
+
+.frameStage{
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--stage-ratio, 3 / 2);
+}
+
+.frameImg{
+  max-width:100% !important;
+  max-height:100% !important;
+}
+
+img{
+  max-width:100%;
+  height:auto;
+}
+
+/* ===== Horizontal marquee gallery ===== */
+.marquee{
+  width: 100%;
+  height: auto;
+  overflow: hidden;
+  position: relative;
+  padding: 24px 0;
+}
+
+.track{
+  display: grid;
+  gap: 26px;
+  padding: 18px 20px;
+  will-change: transform;
+}
+
+/* each row is a horizontal flex strip */
+.track .row{
+  display: flex;
+  gap: 70px;
+}
+
+/* each artwork tile width */
+.track .row .artCard{
+  flex: 0 0 auto;
+  margin: 10px;
+  /* width: clamp(220px, 22vw, 320px); */
+}
+
