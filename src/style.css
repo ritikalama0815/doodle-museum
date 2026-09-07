@@ -24,11 +24,8 @@ body{
   align-items:center;
   padding:16px 24px;
   border-bottom:1px solid var(--line);
-  background:#cb1818;
-  color: white;
-}
-
-.topbar {
+  background:#ffd0dc;
+  color: #2a1a1f;
   margin:0;
   font-size:18px;
   letter-spacing:.2px;
@@ -38,7 +35,7 @@ h1 { font-size: 40px; }
 
 a { 
   font-size: 24px; 
-  color: white;
+  color: #2a1a1f;
   text-decoration: none;
 }
 
@@ -85,13 +82,30 @@ a {
   border:1px solid var(--line);
   touch-action:none;
   margin-top: 20px;
+  cursor: url("/pencil-cursor.svg") 1 1, crosshair;
 }
 
 .controls{ margin-top:14px; }
 
 .controlRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 16px;
   padding-top: 15px;
   padding-bottom: 15px;
+}
+
+.controlRow .label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+#eraser.active {
+  outline: 3px solid rgba(0,0,0,.7);
+  outline-offset: 2px;
 }
 
 .titleInput{
@@ -128,24 +142,89 @@ button{
 
 button:hover{ opacity:.92; }
 
-/* ===== Palette ===== */
-.palette{
+/* ===== Color wheel ===== */
+.colorPicker{
   display:flex;
-  gap:10px;
+  align-items:center;
+  gap:18px;
   flex-wrap:wrap;
 }
 
-.swatch{
-  width:26px;
-  height:26px;
-  border-radius:999px;
-  cursor:pointer;
-  border:2px solid rgba(0,0,0,.18);
+.wheelWrap{
+  position:relative;
+  width:140px;
+  height:140px;
+  flex-shrink:0;
 }
 
-.swatch.active{
-  outline:3px solid rgba(0,0,0,.7);
-  outline-offset:2px;
+#colorWheel{
+  width:140px;
+  height:140px;
+  display:block;
+  border-radius:50%;
+  image-rendering:pixelated;
+  image-rendering:crisp-edges;
+  cursor:crosshair;
+  box-shadow:0 0 0 2px rgba(0,0,0,.12);
+}
+
+.wheelMarker{
+  position:absolute;
+  width:12px;
+  height:12px;
+  border:2px solid #fff;
+  outline:1px solid #111;
+  border-radius:50%;
+  pointer-events:none;
+  transform:translate(-50%, -50%);
+  box-shadow:0 1px 2px rgba(0,0,0,.35);
+}
+
+.colorPickerMeta{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  min-width:160px;
+}
+
+.shadeLabel{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+
+#colorValue{
+  width:100%;
+  appearance:none;
+  height:10px;
+  border-radius:999px;
+  background:linear-gradient(to right, #000, var(--shade-end, #111));
+  outline:none;
+}
+
+#colorValue::-webkit-slider-thumb{
+  appearance:none;
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  background:#fff;
+  border:2px solid #111;
+  cursor:pointer;
+}
+
+.currentColorRow{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+
+.colorPreview{
+  width:36px;
+  height:36px;
+  border-radius:8px;
+  border:2px solid rgba(0,0,0,.18);
+  background:#111;
+  flex-shrink:0;
 }
 
 /* ===== Gallery grid ===== */
@@ -186,6 +265,7 @@ button:hover{ opacity:.92; }
   justify-content: center;
   overflow: hidden;
   z-index: 1;
+  background: #fff;
 }
 
 .artWindow img{

@@ -5,10 +5,11 @@ import { createClient } from "@supabase/supabase-js";
 ========================= */
 const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY
 );
-const BUCKET = "drawings";
+const BUCKET = "doodles";
 const TABLE = "drawings";
+const LOCAL_GALLERY_KEY = "doodle-museum-works";
 
 /* =========================
    DOM 
@@ -23,6 +24,12 @@ const captionEl = document.getElementById("caption");
 const submitBtn = document.getElementById("submit");
 const clearBtn = document.getElementById("clear");
 const brushSizeEl = document.getElementById("brushSize");
+const eraserSizeEl = document.getElementById("eraserSize");
+const colorWheel = document.getElementById("colorWheel");
+const wheelMarker = document.getElementById("wheelMarker");
+const colorValueEl = document.getElementById("colorValue");
+const colorPreview = document.getElementById("colorPreview");
+const eraserBtn = document.getElementById("eraser");
 
 const marqueeEl = document.getElementById("marquee");
 const trackEl = document.getElementById("track");
@@ -61,9 +68,148 @@ function pickRandomFrame() {
   return FRAMES[Math.floor(Math.random() * FRAMES.length)];
 }
 
+function publicUrlFor(path) {
+  const base = import.meta.env.VITE_SUPABASE_URL;
+  if (!base || !path) return "";
+  if (/^(https?:|data:|blob:)/.test(path)) return path;
+  return `${base}/storage/v1/object/public/${BUCKET}/${path}`;
+}
+
+function urlForRow(row) {
+  if (!row) return "";
+  return row.publicUrl || row.dataUrl || publicUrlFor(row.path);
+}
+
+function readLocalGallery() {
+  try {
+    const rows = JSON.parse(localStorage.getItem(LOCAL_GALLERY_KEY) || "[]");
+    return Array.isArray(rows) ? rows.filter((row) => row && !row.flagged) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveLocalWork(row) {
+  const rows = readLocalGallery().filter((item) => item.path !== row.path);
+  rows.unshift(row);
+  localStorage.setItem(LOCAL_GALLERY_KEY, JSON.stringify(rows.slice(0, 40)));
+}
+
+async function blobToBase64(blob) {
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  return dataUrl;
+}
+
+async function appendGalleryManifest(row) {
+  try {
+    const res = await fetch(publicUrlFor("gallery.json"));
+    const existing = res.ok ? await res.json() : [];
+    const next = [row, ...(Array.isArray(existing) ? existing.filter((item) => item.path !== row.path) : [])].slice(0, 400);
+    const blob = new Blob([JSON.stringify(next)], { type: "application/json" });
+    await supabase.storage.from(BUCKET).upload("gallery.json", blob, {
+      contentType: "application/json",
+      upsert: true,
+    });
+  } catch {}
+}
+
+async function fetchGalleryRows(limit = 50) {
+  const rows = [];
+  const seen = new Set();
+  const add = (row) => {
+    if (!row?.path || seen.has(row.path)) return;
+    seen.add(row.path);
+    rows.push(row);
+  };
+
+  try {
+    const { data, error } = await supabase
+      .from(TABLE)
+      .select("path, caption, flagged, created_at")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (!error && data) data.forEach(add);
+  } catch {}
+
+  try {
+    const res = await fetch(publicUrlFor("gallery.json"));
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) data.forEach(add);
+    }
+  } catch {}
+
+  try {
+    const res = await fetch("/api/drawings");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data)) data.forEach(add);
+    }
+  } catch {}
+
+  readLocalGallery().forEach(add);
+
+  rows.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+  return rows.slice(0, limit);
+}
+
+async function persistDrawing({ blob, caption, flagged, path, created_at, dataUrl }) {
+  try {
+    const { error: uploadError } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, blob, { contentType: "image/png", upsert: false });
+
+    if (!uploadError) {
+      const { error: insertError } = await supabase
+        .from(TABLE)
+        .insert([{ path, caption, flagged }]);
+      if (insertError) console.error(insertError);
+      await appendGalleryManifest({ path, caption, flagged, created_at });
+      return { path, caption, flagged, created_at, publicUrl: publicUrlFor(path) };
+    }
+  } catch (error) {
+    console.error(error);
+  }
+
+  try {
+    const res = await fetch("/api/drawings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        caption,
+        flagged,
+        path,
+        created_at,
+        imageBase64: dataUrl,
+      }),
+    });
+    if (res.ok) return await res.json();
+  } catch {}
+
+  return null;
+}
+
 /* =========================
    addToGallery() HERE
 ========================= */
+
+function addToGallery(publicUrl, caption, flagged, createdAt, prepend = false) {
+  if (!galleryEl) return;
+  const wrap = buildArtNode(
+    publicUrl,
+    caption,
+    flagged,
+    createdAt,
+    pickRandomFrame()
+  );
+  if (prepend) galleryEl.prepend(wrap);
+  else galleryEl.appendChild(wrap);
+}
 
 /* =========================
    loadGallery() HERE
@@ -73,52 +219,218 @@ async function loadGallery(limit = 50, randomize = false) {
   if (!galleryEl) return;
 
   try {
-    
-    const { data,error} = await supabase.from(TABLE).select("path, caption, flagged, created_at").order("created_at", { ascending: false }).limit(poolSize);
+    let rows = await fetchGalleryRows(randomize ? Math.max(limit * 3, limit) : limit);
+    if (randomize) rows = shuffleArray(rows).slice(0, limit);
 
-    if (error) throw error;
-
-      //iterate from bucket
-    for (const row of rows){
-      const { data: publicData} = supabase.storage.from(BUCKET).getPublicUrl(row.path);
-      addToGallery(publicData.publicUrl, row.caption ?? "", !!row.flagged, row.created_at);
+    galleryEl.replaceChildren();
+    for (const row of rows) {
+      addToGallery(urlForRow(row), row.caption ?? "", !!row.flagged, row.created_at);
     }
   } catch (error) {
-    console.log(error)
+    console.error(error);
   }
 } 
 
 
 /* =========================
-   Drawing palette + canvas 
+   Color wheel + canvas
 ========================= */
-const PALETTE = ["#111111", "#E11D48", "#FB7185", "#F59E0B", "#10B981", "#3B82F6", "#fff"];
-let strokeColor = PALETTE[0];
+let strokeColor = "#111111";
+const hsv = { h: 0, s: 0, v: 0.07 };
+let pickingWheel = false;
+let isErasing = false;
 
-function initPaletteUI() {
-  const paletteEl = document.getElementById("palette");
-  if (!paletteEl) return;
+function hsvToRgb(h, s, v) {
+  const c = v * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = v - c;
+  let r = 0, g = 0, b = 0;
+  if (h < 60) [r, g, b] = [c, x, 0];
+  else if (h < 120) [r, g, b] = [x, c, 0];
+  else if (h < 180) [r, g, b] = [0, c, x];
+  else if (h < 240) [r, g, b] = [0, x, c];
+  else if (h < 300) [r, g, b] = [x, 0, c];
+  else [r, g, b] = [c, 0, x];
+  return [
+    Math.round((r + m) * 255),
+    Math.round((g + m) * 255),
+    Math.round((b + m) * 255),
+  ];
+}
 
-  paletteEl.innerHTML = "";
-  PALETTE.forEach((c, idx) => {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "swatch" + (idx === 0 ? " active" : "");
-    b.style.background = c;
+function rgbToHex(r, g, b) {
+  return "#" + [r, g, b].map((n) => n.toString(16).padStart(2, "0")).join("");
+}
 
-    b.addEventListener("click", () => {
-      strokeColor = c;
-      paletteEl.querySelectorAll(".swatch").forEach(s => s.classList.remove("active"));
-      b.classList.add("active");
-    });
+function setErasing(on) {
+  isErasing = on;
+  eraserBtn?.classList.toggle("active", on);
+}
 
-    paletteEl.appendChild(b);
+function applyStrokeColor() {
+  const [r, g, b] = hsvToRgb(hsv.h, hsv.s, hsv.v);
+  strokeColor = rgbToHex(r, g, b);
+  if (colorPreview) colorPreview.style.background = strokeColor;
+  if (colorValueEl) {
+    const [hr, hg, hb] = hsvToRgb(hsv.h, hsv.s, 1);
+    colorValueEl.style.setProperty("--shade-end", rgbToHex(hr, hg, hb));
+  }
+  setErasing(false);
+}
+
+function drawColorWheel() {
+  if (!colorWheel) return;
+  const wctx = colorWheel.getContext("2d", { willReadFrequently: true });
+  const size = colorWheel.width;
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const radius = cx;
+  const img = wctx.createImageData(size, size);
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = x - cx;
+      const dy = y - cy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const i = (y * size + x) * 4;
+      if (dist > radius) {
+        img.data[i + 3] = 0;
+        continue;
+      }
+      const hue = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+      const sat = dist / radius;
+      const [r, g, b] = hsvToRgb(hue, sat, 1);
+      img.data[i] = r;
+      img.data[i + 1] = g;
+      img.data[i + 2] = b;
+      img.data[i + 3] = 255;
+    }
+  }
+  wctx.putImageData(img, 0, 0);
+}
+
+function updateWheelMarker() {
+  if (!wheelMarker || !colorWheel) return;
+  const size = colorWheel.getBoundingClientRect().width;
+  const cx = size / 2;
+  const radius = cx - 1;
+  const rad = (hsv.h * Math.PI) / 180;
+  wheelMarker.style.left = `${cx + Math.cos(rad) * hsv.s * radius}px`;
+  wheelMarker.style.top = `${cx + Math.sin(rad) * hsv.s * radius}px`;
+}
+
+function pickFromWheel(e) {
+  if (!colorWheel) return;
+  const rect = colorWheel.getBoundingClientRect();
+  const size = colorWheel.width;
+  const x = (e.clientX - rect.left) * (size / rect.width);
+  const y = (e.clientY - rect.top) * (size / rect.height);
+  const cx = (size - 1) / 2;
+  const cy = (size - 1) / 2;
+  const dx = x - cx;
+  const dy = y - cy;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const radius = cx;
+  hsv.h = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+  hsv.s = Math.min(dist / radius, 1);
+  if (hsv.v < 0.2) {
+    hsv.v = 1;
+    if (colorValueEl) colorValueEl.value = "100";
+  }
+  applyStrokeColor();
+  updateWheelMarker();
+}
+
+function initColorWheel() {
+  if (!colorWheel) return;
+
+  drawColorWheel();
+  applyStrokeColor();
+  updateWheelMarker();
+
+  colorWheel.addEventListener("pointerdown", (e) => {
+    pickingWheel = true;
+    try { colorWheel.setPointerCapture(e.pointerId); } catch {}
+    pickFromWheel(e);
+  });
+  colorWheel.addEventListener("pointermove", (e) => {
+    if (pickingWheel) pickFromWheel(e);
+  });
+  colorWheel.addEventListener("pointerup", () => { pickingWheel = false; });
+  colorWheel.addEventListener("pointercancel", () => { pickingWheel = false; });
+
+  colorValueEl?.addEventListener("input", () => {
+    hsv.v = Number(colorValueEl.value) / 100;
+    applyStrokeColor();
+  });
+
+  eraserBtn?.addEventListener("click", () => {
+    setErasing(!isErasing);
   });
 }
 
+function applyPencilCursor() {
+  if (!canvas) return;
+
+  const pixels = [
+    "tk..............",
+    "kTkk............",
+    ".kyyk...........",
+    ".kyyyk..........",
+    "..kyyyk.........",
+    "..kyyyyk........",
+    "...kyyyyk.......",
+    "...kyymmk.......",
+    "....kmmmmk......",
+    "....kmmmmk......",
+    ".....keeeek.....",
+    ".....keeeek.....",
+    "......keeek.....",
+    "......kpppk.....",
+    ".......kkk......",
+    "................",
+  ];
+  const palette = {
+    t: "#2c2c2c",
+    T: "#5a5a5a",
+    k: "#1a1208",
+    y: "#f0c44c",
+    m: "#c8c8c8",
+    e: "#ff9bb5",
+    p: "#e07090",
+  };
+  const scale = 2;
+  const size = pixels.length * scale;
+  const c = document.createElement("canvas");
+  c.width = size;
+  c.height = size;
+  const cctx = c.getContext("2d");
+  cctx.imageSmoothingEnabled = false;
+
+  for (let y = 0; y < pixels.length; y++) {
+    for (let x = 0; x < pixels[y].length; x++) {
+      const color = palette[pixels[y][x]];
+      if (!color) continue;
+      cctx.fillStyle = color;
+      cctx.fillRect(x * scale, y * scale, scale, scale);
+    }
+  }
+
+  canvas.style.cursor = `url("${c.toDataURL("image/png")}") 1 1, crosshair`;
+}
+
 function getBrushSize() {
-  const n = Number(brushSizeEl?.value ?? 50);
-  return Number.isFinite(n) ? n : 50;
+  const n = Number(brushSizeEl?.value ?? 6);
+  return Number.isFinite(n) ? n : 6;
+}
+
+function getEraserSize() {
+  const n = Number(eraserSizeEl?.value ?? 16);
+  return Number.isFinite(n) ? n : 16;
+}
+
+function getToolSize() {
+  return isErasing ? getEraserSize() : getBrushSize();
 }
 
 function clearCanvas() {
@@ -153,10 +465,11 @@ function draw(e) {
 
   const { x, y } = getPos(e);
 
-  ctx.lineWidth = getBrushSize();
+  ctx.lineWidth = getToolSize();
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = strokeColor;
+  ctx.globalCompositeOperation = isErasing ? "destination-out" : "source-over";
+  ctx.strokeStyle = isErasing ? "#000000" : strokeColor;
 
   ctx.lineTo(x, y);
   ctx.stroke();
@@ -168,6 +481,7 @@ function endDraw() {
   if (!canvas || !ctx) return;
   isDrawing = false;
   ctx.closePath();
+  ctx.globalCompositeOperation = "source-over";
 }
 
 function decideFlagging(pixelData) {
@@ -243,6 +557,8 @@ function makeCenteredSquarePng(canvas, pad = 24) {
   const dx = Math.floor((size - bw) / 2);
   const dy = Math.floor((size - bh) / 2);
 
+  octx.fillStyle = "#fff";
+  octx.fillRect(0, 0, size, size);
   octx.drawImage(
     canvas,
     bounds.minX, bounds.minY, bw, bh,  // source crop
@@ -256,35 +572,27 @@ function makeCenteredSquarePng(canvas, pad = 24) {
    submitDrawing() HERE
 ========================= */
 async function submitDrawing() {
-  if(!canvas || !ctx) return;
+  if (!canvas || !ctx) return;
   try {
-    //collect caption
     const caption = (captionEl?.value ?? "").trim().slice(0, 140);
-
-    const imageData = ctx.getImageData(0,0,canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const flagged = decideFlagging(imageData.data);
-
+    if (flagged) return;
     const exportCanvas = makeCenteredSquarePng(canvas, 32);
-    const blob = await new Promise((resolve,reject)=>{
-      //convert to blob to it is easy to store in supabase bucket
-      exportCanvas.toBlob((b)=>(b?resolve(b):reject(new Error("toBlob failed"))), "image/png");
-    })
-    const filename = `${Date.now()}-${crypto.randomUUID()}.png`;
-    const path = `public/${filename}`
+    const blob = await new Promise((resolve, reject) => {
+      exportCanvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
+    });
 
-    const {error:uploadError} = await supabase.storage.from(BUCKET).upload(path, blob, {contentType:"image/png", upsert:false});
-    if (uploadError) throw uploadError;
+    const created_at = new Date().toISOString();
+    const path = `public/${Date.now()}-${crypto.randomUUID()}.png`;
+    const dataUrl = await blobToBase64(blob);
 
-    const{error:insertError} = await supabase.from(TABLE).insert([{path,caption,flagged}])
-
-    if (insertError) throw insertError;
-
-    const { data: publicData } = supabase.storage.from(BUCKET).getPublicUrl(path);
-    addToGallery(publicData.publicUrl, caption, flagged, new Date().toISOString());
-    
+    addToGallery(dataUrl, caption, flagged, created_at, true);
+    saveLocalWork({ path, caption, flagged, created_at, dataUrl });
     clearCanvas();
     if (captionEl) captionEl.value = "";
 
+    await persistDrawing({ blob, caption, flagged, path, created_at, dataUrl });
   } catch (error) {
     console.error(error);
   }
@@ -308,7 +616,7 @@ function buildArtNode(publicUrl, title, flagged, createdAt, frame) {
       <div class="artWindow">
         <img src="${publicUrl}" alt="${escapeHtml(title)}" loading="lazy" />
       </div>
-      <img class="frameImg" src="${frame.src}" alt="frame" />
+      <img class="frameImg" src="${frame.src}" alt="" onerror="this.style.display='none'" />
     </div>
 
     <div class="placard">
@@ -331,23 +639,19 @@ function buildArtNode(publicUrl, title, flagged, createdAt, frame) {
   //   if (img) img.style.filter = "blur(10px) saturate(0.7)";
   // }
 
+  const frameImg = wrap.querySelector(".frameImg");
+  if (frameImg) {
+    frameImg.addEventListener("error", () => {
+      frameImg.style.display = "none";
+    });
+  }
+
   return wrap;
 }
 
 async function fetchRandomRows(count = 200) {
-  // Pull a pool, shuffle client-side, slice.
-  // Adjust pool size if needed; bigger = more random but more data.
-  const poolSize = Math.max(600, count * 3);
-
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select("path, caption, flagged, created_at")
-    .order("created_at", { ascending: false })
-    .limit(poolSize);
-
-  if (error) throw error;
-
-  const shuffled = shuffleArray(data ?? []);
+  const rows = await fetchGalleryRows(Math.max(count, 40));
+  const shuffled = shuffleArray(rows);
   const picked = [];
 
   for (const row of shuffled) {
@@ -381,14 +685,14 @@ async function repeatMarquee(count = 200) {
       rows.forEach((row, idx) => {
         if (!row?.path) return;
 
-        const { data: publicData } = supabase.storage.from(BUCKET).getPublicUrl(row.path);
+        const artUrl = urlForRow(row);
 
         const frame = (typeof pickFrameForPath === "function")
           ? pickFrameForPath(row.path)
           : pickRandomFrame();
 
         const node = buildArtNode(
-          publicData.publicUrl,
+          artUrl,
           row.caption ?? "",
           !!row.flagged,
           row.created_at,
@@ -412,7 +716,6 @@ async function repeatMarquee(count = 200) {
     row1.appendChild(frag1);
     row2.appendChild(frag2);
 
-    setStatus(`Repeated. Total now ${row1.children.length + row2.children.length}`);
   } catch (err) {
     console.error(err);
   }
@@ -483,7 +786,8 @@ async function init() {
     canvas.addEventListener("pointercancel", endDraw);
     canvas.addEventListener("pointerleave", endDraw);
 
-    initPaletteUI();
+    initColorWheel();
+    applyPencilCursor();
     clearCanvas();
   }
 

@@ -25,12 +25,32 @@
         <h2 class="sectionTitle">Draw</h2>
 
         <div class="controls">
-          <div id="palette" class="palette" aria-label="Color palette"></div>
+          <div class="colorPicker" aria-label="Color wheel">
+            <div class="wheelWrap">
+              <canvas id="colorWheel" width="65" height="65" role="img" aria-label="Color wheel"></canvas>
+              <div id="wheelMarker" class="wheelMarker"></div>
+            </div>
+            <div class="colorPickerMeta">
+              <label class="label shadeLabel">
+                Shade
+                <input id="colorValue" type="range" min="0" max="100" value="7" />
+              </label>
+              <div class="currentColorRow">
+                <div id="colorPreview" class="colorPreview" title="Current color"></div>
+                <button id="eraser" class="btn secondary" type="button">eraser</button>
+              </div>
+            </div>
+          </div>
 
           <div class="controlRow">
             <label class="label">
               Brush
               <input id="brushSize" type="range" min="2" max="50" value="6" />
+            </label>
+
+            <label class="label">
+              Eraser
+              <input id="eraserSize" type="range" min="2" max="50" value="16" />
             </label>
 
             <button id="clear" class="btn secondary" type="button">clear canvas</button>
@@ -41,7 +61,7 @@
           <!-- <div id="status" class="status" aria-live="polite"></div> -->
         </div>
 
-        <canvas id="canvas" width="512" height="512"></canvas>
+        <canvas id="canvas" width="512" height="512" aria-label="Drawing canvas"></canvas>
       </section>
 
       <section class="panel">
